@@ -72,12 +72,42 @@ structure Decl where
   params : List String := []
   /-- The declaration body. -/
   body : Expr
-  /-- Whether this declaration is (self-)recursive. Set by Lower when it detects
-      a self-reference; read by Emit to choose a TCO-friendly form (a `function`
-      declaration / trampoline) over a `const` arrow (DESIGN §11). Defaults to
-      `false` so non-recursive decls are unaffected. The exact contract (a plain
-      boolean vs. a richer `RecursionKind`) is tracked by the
-      `typelean-ir-recursion-kind` follow-up subtask. -/
+  /-- Whether this declaration is **recursive**, i.e. Lower has determined that
+      the declaration (transitively) depends on itself — either by a direct
+      self-reference (`f … := … f …`) or by membership in a **mutual-recursion
+      SCC** (`f` calls `g` and `g` calls `f`, neither body naming itself). Set by
+      Lower from its global dependency walk (a self-loop, or an SCC of size ≥ 2,
+      marks every member `true`); defaults to `false` for the common
+      non-recursive case.
+
+      **Contract (decided, `typelean-m1-decide`):** this is a single `Bool`,
+      *not* a richer `RecursionKind` (e.g. `none | structural | wellFounded |
+      tailCall | mutual`). The rationale, weighed against the alternatives:
+
+      * **Emit needs a *decl-level binary* signal, not a recursion *kind*.** Emit
+        reads `isRec` solely to choose a hoisted `function` declaration (which
+        can reference itself and its siblings, sidestepping JS `const` TDZ) over
+        a `const` arrow (`DESIGN` §5, §11). Structural vs. well-founded recursion
+        both lower to *ordinary* recursive functions — the termination proof is
+        erased (`DESIGN` §4.3) — and Emit renders them identically, so
+        `structural`/`wellFounded` variants would be dead metadata. "Tail call"
+        is a *call-site* property (a decl may have both tail and non-tail
+        self-calls), not a decl-level kind: Emit derives the TCO-loop rewrite by
+        scanning the body for tail-position self-calls, independent of this
+        flag, so a `tailCall` variant is both imprecise and redundant.
+      * **Lower computes this cheaply** as a by-product of the dependency
+        topo-order it already builds (self-loop ⇒ `true`; SCC size ≥ 2 ⇒ `true`
+        for every member).
+      * **Emit cannot derive this alone** for the mutual case: scanning one
+        decl's body for `const d.name` catches direct self-recursion but misses
+        mutual recursion (neither body names itself). The mutual-SCC view is
+        global, which only Lower has — so the flag is *not* redundant; it
+        carries exactly the information Emit cannot recover locally.
+
+      A `Bool` thus preserves IR minimality, matches the binary
+      `const`/`function` emit rule, and avoids a `tailCall` variant that is
+      semantically wrong at the decl level. The public name `isRec` is stable;
+      Lower sets it, Emit reads it. -/
   isRec : Bool := false
   deriving Inhabited
 

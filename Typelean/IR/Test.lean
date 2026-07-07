@@ -102,6 +102,31 @@ fields via `match` and assert the recorded value directly (complementary to the
 #guard (({ name := "f", params := ["n"],
            body := .app (.const "f") (.var "n"), isRec := true } : Decl).isRec == true)
 
+/-! ## `isRec` semantics (decided: a single `Bool`, see `typelean-m1-decide`)
+
+The flag is the *authoritative* Lower-set signal that a decl is recursive —
+direct self-reference **or** mutual-SCC member — independent of whether a naive
+body self-scan would find the decl's own name. These assertions lock that
+contract: a decl may read `isRec == true` even when its body names a *different*
+constant (the mutual case Emit cannot derive locally), and `false` even when it
+references another (non-recursive) constant. The field value is whatever Lower
+set; Emit must trust the field, not re-derive recursion from the body. -/
+
+-- Mutual recursion (model): `g`'s body calls `f`, not itself, yet Lower marks
+-- the whole SCC recursive — the bit Emit cannot recover from `g`'s body alone.
+#guard (({ name := "g", params := ["n"],
+           body := .app (.const "f") (.var "n"), isRec := true } : Decl).isRec == true)
+-- A non-recursive decl referencing a *different* constant keeps the default
+-- `isRec == false`: referencing another decl alone does not set the flag
+-- (Lower only marks self-/mutual-recursion).
+#guard (({ name := "id_of_f", params := ["x"],
+           body := .const "f" } : Decl).isRec == false)
+-- The field is the source of truth, not a body derivation: a decl whose body
+-- names itself reads exactly the value Lower recorded (here the default
+-- `false`), so Emit must read the field rather than scan the body.
+#guard (({ name := "h", params := ["n"],
+           body := .app (.const "h") (.var "n") } : Decl).isRec == false)
+
 /-! ## `Module` — empty, single-decl, multi-decl -/
 
 #guard (Module.toString ({} : Module) == "(module)")
