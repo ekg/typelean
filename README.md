@@ -108,6 +108,12 @@ OPPORTUNITIES.md  # research catalog: proof-of-correctness over testing
 SURVEY.md         # prior-art survey of Lean→X compilers & verified compilers
 ```
 
+## Documentation
+
+- **[`docs/USAGE.md`](docs/USAGE.md)** — usage guide (honest, grounded in current M1 state):
+  install, first compile, pipeline diagram, what works / what doesn't, fidelity
+  harness, and proof-carrying thesis.
+
 ## Autopoietic development
 
 typelean is being built with an autopoietic task-graph agent system (`wg`): a
