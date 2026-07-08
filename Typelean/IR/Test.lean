@@ -67,6 +67,40 @@ open Typelean.IR
 #guard (Expr.toString (.proj (.var "s") 0)    == "(proj (var s) 0)")
 #guard (Expr.toString (.proj (.const "p") 2)  == "(proj (const p) 2)")
 
+/-! ## `switch` — the recursor/casesOn control-flow construct (DESIGN §4.3) -/
+
+-- A non-recursive inductive switch (e.g. `Color`): no IH params, `self` unused,
+-- exhaustive so `default = none`.
+#guard (Expr.toString
+          (.switch (.var "c") "self"
+            [{ tag := 0, params := [], body := .lit (.natLit 0) },
+             { tag := 1, params := [], body := .lit (.natLit 1) },
+             { tag := 2, params := [], body := .lit (.natLit 2) }]
+            none)
+        == "(switch (var c) self [(case 0 () (lit nat_lit 0)) (case 1 () (lit nat_lit 1)) (case 2 () (lit nat_lit 2))] none)")
+
+-- A recursive `Nat` switch: `zero` (tag 0, no fields) and `succ` (tag 1, one
+-- field `n` plus one IH name `ih`), the `succ` branch recurses via `(var self)`.
+#guard (Expr.toString
+          (.switch (.var "n") "f"
+            [{ tag := 0, params := [], body := .lit (.natLit 1) },
+             { tag := 1, params := ["n", "ih"],
+               body := .app (.app (.var "f") (.var "n")) (.lit (.natLit 2)) }]
+            none)
+        == "(switch (var n) f [(case 0 () (lit nat_lit 1)) (case 1 (n ih) (app (app (var f) (var n)) (lit nat_lit 2)))] none)")
+
+-- A switch with a `some` default fallback renders the default body.
+#guard (Expr.toString
+          (.switch (.var "x") "self"
+            [{ tag := 0, params := ["a"], body := .var "a" }]
+            (some (.lit (.natLit 99))))
+        == "(switch (var x) self [(case 0 (a) (var a))] (lit nat_lit 99))")
+
+-- `SwitchCase` pretty-prints standalone as `(case tag (params…) body)`.
+#guard (SwitchCase.toString { tag := 1, params := ["n", "ih"], body := .var "n" }
+        == "(case 1 (n ih) (var n))")
+#guard (({ tag := 0, params := [], body := .lit (.natLit 0) } : SwitchCase).tag == 0)
+
 -- a nested term: a self-application applied to the identity
 #guard (Expr.toString
           (.app (.lam "x" (.app (.var "x") (.var "x")))
@@ -88,6 +122,20 @@ fields via `match` and assert the recorded value directly (complementary to the
 #guard (match Expr.var "v"               with | .var n      => n == "v" | _ => false)
 #guard (match Expr.const "Nat.succ"      with | .const n    => n == "Nat.succ" | _ => false)
 #guard (match Expr.lit (.natLit 9)        with | .lit (.natLit n) => n == 9 | _ => false)
+/-- Structural check for the `switch` constructor: reads `scrut`, `self`, the
+    single `SwitchCase`'s `tag`/`params`/`body`, and `default`. -/
+def switchInvariant : Bool :=
+  match Expr.switch (Expr.var "c") "self"
+          [{ tag := 1, params := ["n"], body := .var "n" }] none with
+  | .switch scrut self cs dft =>
+    scrut.toString == "(var c)" && self == "self"
+    && cs.length == 1
+    && match cs.head? with
+      | some c => c.tag == 1 && c.params == ["n"] && c.body.toString == "(var n)"
+      | none => false
+    && dft.isNone
+  | _ => false
+#guard switchInvariant
 #guard (match Expr.app (Expr.var "f") (Expr.var "a")
                  with | .app g b => g.toString == "(var f)" && b.toString == "(var a)" | _ => false)
 
@@ -145,6 +193,11 @@ example : Expr.toString (.var "x") = "(var x)" := by native_decide
 example : Expr.toString (.proj (.var "s") 2) = "(proj (var s) 2)" := by native_decide
 example : Expr.toString (.ctor "C" 0 [.var "a", .var "b"])
           = "(ctor C 0 [(var a), (var b)])" := by native_decide
+example : Expr.toString
+          (.switch (.var "n") "f"
+            [{ tag := 0, params := [], body := .lit (.natLit 1) },
+             { tag := 1, params := ["n"], body := .var "n" }] none)
+        = "(switch (var n) f [(case 0 () (lit nat_lit 1)) (case 1 (n) (var n))] none)" := by native_decide
 example : Lit.toString (.boolLit true) = "bool_lit true" := by native_decide
 example : Decl.toString { name := "id", params := ["x"], body := .var "x" }
           = "(decl id (x) (var x))" := by native_decide
