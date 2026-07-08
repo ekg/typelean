@@ -93,6 +93,10 @@ def primTable : List (String × String) :=
   , ("Nat.div",    "_rt.natDiv")
   , ("Nat.mod",    "_rt.natMod")
   , ("Nat.beq",    "_rt.natBeq")
+  , ("Int.ofNat",   "(n) => n")
+  , ("Int.negSucc", "(n) => -(n + 1n)")
+  , ("Int.neg",     "(n) => -n")
+  , ("Int.negOfNat","(n) => -n")
   ]
 
 /-- Look up a constant name in the primitive table. -/
@@ -132,9 +136,21 @@ partial def emitExpr (declNames : List String) : Expr → String
   | .letE n v b  =>
     "(() => { const " ++ sanitizeIdent n ++ " = " ++ emitExpr declNames v
       ++ "; return " ++ emitExpr declNames b ++ " })()"
-  | .ctor _ tag args =>
-    "_rt.ctor(" ++ toString tag ++ ", ["
-      ++ String.intercalate ", " (args.map (emitExpr declNames)) ++ "])"
+  | .ctor name tag args =>
+    -- Int.ofNat and Int.negSucc are constructors of the `Int` inductive type, but
+    -- the runtime represents `Int` as a raw BigInt (DESIGN §11), not as a `_rt.ctor`
+    -- object. Emit `Int.ofNat n` as the BigInt `n`, and `Int.negSucc n` as `-(n+1n)`.
+    if let [a] := args then
+      if name == "Int.ofNat" then
+        emitExpr declNames a
+      else if name == "Int.negSucc" then
+        "(-(" ++ emitExpr declNames a ++ " + 1n))"
+      else
+        "_rt.ctor(" ++ toString tag ++ ", ["
+          ++ String.intercalate ", " (args.map (emitExpr declNames)) ++ "])"
+    else
+      "_rt.ctor(" ++ toString tag ++ ", ["
+        ++ String.intercalate ", " (args.map (emitExpr declNames)) ++ "])"
   | .lit l => match l with
     | .natLit n  => toString n ++ "n"
     | .intLit i  => toString i ++ "n"
