@@ -18,7 +18,13 @@ Constructors:
   Emit renders each with the correct runtime constructor.
 * `const` — a reference to a top-level declaration (mangled by Emit).
 * `proj` — a structure field projection: `struct_` is (at runtime) a constructor
-  object and `idx` is the 0-based field index (DESIGN §4.4, §5). -/
+  object and `idx` is the 0-based field index (DESIGN §4.4, §5).
+* `switch` — case analysis on a constructor's runtime tag: the IR rendering of
+  Lean's recursor eliminator (`T.rec` / `T.casesOn` / `T.brecOn` / matcher
+  auxiliaries), produced by the Lower recursor rewriter (DESIGN §4.3). A
+  `switch` names its own recursive helper (`self`) so recursive constructors can
+  recurse on sub-values via `(var self)`; for non-recursive inductives `self` is
+  unused. -/
 
 namespace Typelean.IR
 
@@ -42,7 +48,15 @@ inductive Lit where
   | boolLit (b : Bool)
   deriving Inhabited, DecidableEq, BEq, Hashable
 
-/-- IR expressions: untyped core terms produced by lowering and consumed by emit. -/
+/-! IR expressions: untyped core terms produced by lowering and consumed by emit.
+
+`Expr` and `SwitchCase` are **mutually recursive** (a `switch` carries a list
+of `SwitchCase`, and a `SwitchCase.body` is an `Expr`), so they are declared
+in a single `mutual` block. This keeps the forward reference `List SwitchCase`
+in the `switch` constructor well-formed and puts both types in the same
+universe block, so `sizeOf` (used by the mutually-recursive pretty-printer
+below) reduces for the kernel (DESIGN §4.3). -/
+mutual
 inductive Expr where
   /-- Local variable, referenced by name (lowering chooses a naming scheme). -/
   | var (name : String)
@@ -62,7 +76,32 @@ inductive Expr where
   /-- Structure field projection: `struct_.{idx}`. At runtime `struct_` is a
       constructor object and `idx` is the 0-based field index (DESIGN §4.4, §5). -/
   | proj (struct_ : Expr) (idx : Nat)
+  /-- Case analysis on a constructor's runtime tag (DESIGN §4.3). `scrut` is the
+      value being matched; `self` names the switch's own recursive helper, so a
+      branch body may recurse on a sub-value via `(var self)`; `cases` is one
+      branch per constructor (in declaration order); `default` is the fallback
+      (`none` when the recursor is exhaustive, which is the M1 case). Each
+      `SwitchCase.params` binds the constructor's fields (declaration order)
+      followed by one induction-hypothesis name per recursive field (in order). -/
+  | switch (scrut : Expr) (self : String) (cases : List SwitchCase) (default : Option Expr)
   deriving Inhabited
+
+/-- One branch of an `Expr.switch`: the constructor's numeric `tag`, the bound
+    names (constructor fields in declaration order, then one induction-
+    hypothesis name per recursive field, in order), and the branch body. The
+    body may reference the bound names via `(var name)` and the switch's
+    recursive helper via `(var self)` (DESIGN §4.3). -/
+structure SwitchCase where
+  /-- The constructor's numeric tag (`Lean.ConstructorVal.cidx`). -/
+  tag : Nat
+  /-- Bound names: constructor fields (declaration order) then induction-
+      hypothesis names (one per recursive field, in order). -/
+  params : List String := []
+  /-- The branch body; may reference `params` via `(var name)` and the switch's
+      recursive helper via `(var self)`. -/
+  body : Expr
+  deriving Inhabited
+end
 
 /-- A top-level IR declaration: `name params* := body`. -/
 structure Decl where
@@ -157,17 +196,36 @@ def Lit.toString : Lit → String
   | .charLit c => s!"char_lit {escapeChar c}"
   | .boolLit b => s!"bool_lit {b}"
 
-/-- Render an expression as a fully-parenthesized S-expression. -/
-def Expr.toString : Expr → String
-  | .var name       => s!"(var {name})"
-  | .lam param body => s!"(lam {param} {body.toString})"
-  | .app fn arg     => s!"(app {fn.toString} {arg.toString})"
-  | .letE name v b  => s!"(let {name} := {v.toString}; {b.toString})"
-  | .ctor name tag args =>
-    s!"(ctor {name} {tag} [{String.intercalate ", " (args.map Expr.toString)}])"
-  | .lit l          => s!"(lit {l.toString})"
-  | .const name     => s!"(const {name})"
-  | .proj st idx    => s!"(proj {st.toString} {idx})"
+/-! The `Expr.toString` `switch` case and `SwitchCase.toString` are mutually
+    recursive (a switch carries a list of `SwitchCase`, and a case body is an
+    `Expr`), so they are grouped in a `mutual` block using well-founded recursion
+    on `sizeOf`. This keeps both non-`partial`, so `#guard` golden tests and
+    `native_decide` proofs in `IR/Test.lean` can reduce them (a `partial` def is
+    irreducible to the kernel). -/
+mutual
+  /-- Render an expression as a fully-parenthesized S-expression. -/
+  def Expr.toString : Expr → String
+    | .var name       => s!"(var {name})"
+    | .lam param body => s!"(lam {param} {body.toString})"
+    | .app fn arg     => s!"(app {fn.toString} {arg.toString})"
+    | .letE name v b  => s!"(let {name} := {v.toString}; {b.toString})"
+    | .ctor name tag args =>
+      s!"(ctor {name} {tag} [{String.intercalate ", " (args.map Expr.toString)}])"
+    | .lit l          => s!"(lit {l.toString})"
+    | .const name     => s!"(const {name})"
+    | .proj st idx    => s!"(proj {st.toString} {idx})"
+    | .switch scrut self cases default? =>
+      let cs := String.intercalate " " (cases.map SwitchCase.toString)
+      let dft := match default? with | some d => d.toString | none => "none"
+      s!"(switch {scrut.toString} {self} [{cs}] {dft})"
+  termination_by e => sizeOf e
+
+  /-- Render a `SwitchCase` as `(case tag (params…) body)`. -/
+  def SwitchCase.toString : SwitchCase → String
+    | { tag := t, params := ps, body := b } =>
+      s!"(case {t} ({String.intercalate " " ps}) {b.toString})"
+  termination_by c => sizeOf c
+end
 
 /-- Render a declaration as `(decl name (params…) body)`. -/
 def Decl.toString (d : Decl) : String :=
@@ -184,11 +242,13 @@ def Module.toString (m : Module) : String :=
     `Repr` (for `repr` / `#eval`), both delegating to the `toString` renderer
     above so the two views never disagree. -/
 instance : ToString Lit    := ⟨Lit.toString⟩
+instance : ToString SwitchCase := ⟨SwitchCase.toString⟩
 instance : ToString Expr    := ⟨Expr.toString⟩
 instance : ToString Decl    := ⟨Decl.toString⟩
 instance : ToString Module  := ⟨Module.toString⟩
 
 instance : Repr Lit    := ⟨fun a _ => Lit.toString a⟩
+instance : Repr SwitchCase := ⟨fun a _ => SwitchCase.toString a⟩
 instance : Repr Expr    := ⟨fun a _ => Expr.toString a⟩
 instance : Repr Decl    := ⟨fun a _ => Decl.toString a⟩
 instance : Repr Module  := ⟨fun a _ => Module.toString a⟩
