@@ -28,6 +28,7 @@ const _rt = {
   intRepr: (n) => (n < 0n ? "-" + (-n).toString() : n.toString()),
 
   // String.append (Lean `String ++`).
+  strLength: (s) => [...s].length,
   strAppend: (a) => (b) => a + b,
 
   // Nat arithmetic (BigInt). Lean `Nat.sub` is truncating (0 below zero).

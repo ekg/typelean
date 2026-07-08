@@ -36,6 +36,7 @@ def runtimeSource : String :=
   , "  ctor: (tag, fields) => ({ _tag: tag, _fields: fields }),"
   , "  natRepr: (n) => n.toString(),"
   , "  intRepr: (n) => (n < 0n ? \"-\" + (-n).toString() : n.toString()),"
+  , "  strLength: (s) => [...s].length,"
   , "  strAppend: (a) => (b) => a + b,"
   , "  natAdd: (a) => (b) => a + b,"
   , "  natMul: (a) => (b) => a * b,"
@@ -84,6 +85,7 @@ def primTable : List (String × String) :=
   , ("IO.print",   "_rt.print")
   , ("Nat.repr",   "_rt.natRepr")
   , ("Int.repr",   "_rt.intRepr")
+  , ("String.length", "_rt.strLength")
   , ("String.append", "_rt.strAppend")
   , ("Nat.add",    "_rt.natAdd")
   , ("Nat.mul",    "_rt.natMul")
