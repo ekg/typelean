@@ -1,0 +1,18 @@
+# typelean smoke manifest — the mechanical acceptance gate.
+#
+# `wg done <task>` runs every scenario whose `owners` includes the task ID
+# BEFORE accepting "done". Agents CANNOT bypass this (--skip-smoke is refused
+# for agents). A failing scenario blocks done: "Smoke gate refused 'wg done …'".
+#
+# This is the deterministic ground-truth gate (not an LLM opinion): an agent
+# literally cannot mark its impl task done while the fidelity corpus is red.
+
+[[scenarios]]
+name = "parity-full-corpus"
+script = "bash scripts/check-parity.sh"
+owners = [
+  "typelean-m2-recursor",
+  "typelean-m1-parity",
+]
+description = "Full fidelity corpus: lake build + tests/fidelity/run.sh green (lean ≟ node, 0 FAIL / 0 BLOCKED). Blocks done for any task that changes lowering/emission."
+timeout_seconds = 240
